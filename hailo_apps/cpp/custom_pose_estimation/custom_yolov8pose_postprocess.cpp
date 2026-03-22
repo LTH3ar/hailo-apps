@@ -59,7 +59,12 @@ std::pair<std::vector<KeyPt>, std::vector<PairPairs>> process_single_decoding(co
     {
         if (score(i, 0) > joint_threshold)
         {
-            keypoints.push_back(KeyPt({coordinates(i, 0) / network_dims[0], coordinates(i, 1) / network_dims[1], score(i, 0)}));
+            // keypoints.push_back(KeyPt({coordinates(i, 0) / network_dims[0], coordinates(i, 1) / network_dims[1], score(i, 0)}));
+            keypoints.push_back(KeyPt({
+                std::clamp(coordinates(i, 0) / network_dims[0], 0.0f, 1.0f),
+                std::clamp(coordinates(i, 1) / network_dims[1], 0.0f, 1.0f),
+                score(i, 0)
+            }));
         }
     }
 
@@ -68,8 +73,17 @@ std::pair<std::vector<KeyPt>, std::vector<PairPairs>> process_single_decoding(co
     {
         if (score(pair.first, 0) >= joint_threshold && score(pair.second, 0) >= joint_threshold)
         {
-            PairPairs pr = PairPairs({std::make_pair(coordinates(pair.first, 0) / network_dims[0], coordinates(pair.first, 1) / network_dims[1]),
-                                      std::make_pair(coordinates(pair.second, 0) / network_dims[0], coordinates(pair.second, 1) / network_dims[1]),
+            // PairPairs pr = PairPairs({std::make_pair(coordinates(pair.first, 0) / network_dims[0], coordinates(pair.first, 1) / network_dims[1]),
+            //                           std::make_pair(coordinates(pair.second, 0) / network_dims[0], coordinates(pair.second, 1) / network_dims[1]),
+            //                           score(pair.first, 0),
+            //                           score(pair.second, 0)});
+            PairPairs pr = PairPairs({
+                                      std::make_pair(
+                                        std::clamp(coordinates(pair.first, 0) / network_dims[0], 0.0f, 1.0f),
+                                        std::clamp(coordinates(pair.first, 1) / network_dims[1], 0.0f, 1.0f)),
+                                      std::make_pair(
+                                        std::clamp(coordinates(pair.second, 0) / network_dims[0], 0.0f, 1.0f),
+                                        std::clamp(coordinates(pair.second, 1) / network_dims[1], 0.0f, 1.0f)),
                                       score(pair.first, 0),
                                       score(pair.second, 0)});
             pairs.push_back(pr);
@@ -248,7 +262,8 @@ std::vector<Decodings> decode_boxes_and_keypoints(std::vector<HailoTensorPtr> ra
         // Bbox decoding
         for (uint j = 0; j < uint(num_proposals); j++)
         {
-            confidence = xt::row(scores, instance_index)(0);
+            // confidence = xt::row(scores, instance_index)(0);
+            confidence = 1.0f / (1.0f + std::exp(-xt::row(scores, instance_index)(0)));  // sigmoid
             instance_index++;
             if (confidence < SCORE_THRESHOLD)
                 continue;
@@ -271,10 +286,16 @@ std::vector<Decodings> decode_boxes_and_keypoints(std::vector<HailoTensorPtr> ra
             auto distance_view = xt::concatenate(xt::xtuple(distance_view1, distance_view2), 1);
             auto decoded_box = centers[i] + distance_view;
 
-            HailoBBox bbox(decoded_box(j, 0) / network_dims[0],
-                           decoded_box(j, 1) / network_dims[1],
-                           (decoded_box(j, 2) - decoded_box(j, 0)) / network_dims[0],
-                           (decoded_box(j, 3) - decoded_box(j, 1)) / network_dims[1]);
+            // HailoBBox bbox(decoded_box(j, 0) / network_dims[0],
+            //                decoded_box(j, 1) / network_dims[1],
+            //                (decoded_box(j, 2) - decoded_box(j, 0)) / network_dims[0],
+            //                (decoded_box(j, 3) - decoded_box(j, 1)) / network_dims[1]);
+
+            float bx = std::clamp((float)(decoded_box(j, 0) / network_dims[0]), 0.0f, 1.0f);
+            float by = std::clamp((float)(decoded_box(j, 1) / network_dims[1]), 0.0f, 1.0f);
+            float bw = std::clamp((float)((decoded_box(j, 2) - decoded_box(j, 0)) / network_dims[0]), 0.0f, 1.0f);
+            float bh = std::clamp((float)((decoded_box(j, 3) - decoded_box(j, 1)) / network_dims[1]), 0.0f, 1.0f);
+            HailoBBox bbox(bx, by, bw, bh);
 
             label = common::coco_eighty[class_index + 1];
             HailoDetection detected_instance(bbox, class_index, label, confidence);
@@ -407,9 +428,14 @@ std::pair<std::vector<KeyPt>, std::vector<PairPairs>> yolov8(HailoROIPtr roi)
 
         // Fill the xarray with the data from the vector
         for (size_t i = 0; i < scaled_keypoints.size(); ++i)
+        // {
+        //     landmarks(i, 0) = scaled_keypoints[i].xs;
+        //     landmarks(i, 1) = scaled_keypoints[i].ys;
+        //     landmarks(i, 2) = scaled_keypoints[i].joints_scores;
+        // }
         {
-            landmarks(i, 0) = scaled_keypoints[i].xs;
-            landmarks(i, 1) = scaled_keypoints[i].ys;
+            landmarks(i, 0) = std::clamp(scaled_keypoints[i].xs, 0.0f, 1.0f);
+            landmarks(i, 1) = std::clamp(scaled_keypoints[i].ys, 0.0f, 1.0f);
             landmarks(i, 2) = scaled_keypoints[i].joints_scores;
         }
 
@@ -428,28 +454,68 @@ std::pair<std::vector<KeyPt>, std::vector<PairPairs>> yolov8(HailoROIPtr roi)
 //  DEFAULT FILTER
 //******************************************************************
 
+// void filter(HailoROIPtr roi)
+// {
+//     yolov8(roi);
+// }
 void filter(HailoROIPtr roi)
 {
-    yolov8(roi);
+    try {
+        yolov8(roi);
+    } catch (const std::exception &e) {
+        std::cerr << "[CUSTOM-13KP] Exception in filter: " << e.what() << std::endl;
+        // Print tensor info for debugging
+        auto tensors = roi->get_tensors();
+        for (auto &t : tensors) {
+            std::cerr << "  tensor: " << t->name()
+                      << " shape: " << t->width() << "x" << t->height()
+                      << "x" << t->features() << std::endl;
+        }
+    }
 }
+// void filter_letterbox(HailoROIPtr roi)
+// {
+//     filter(roi);
+//     // Resize Letterbox
+//     HailoBBox roi_bbox = hailo_common::create_flattened_bbox(roi->get_bbox(), roi->get_scaling_bbox());
+//     auto detections = hailo_common::get_hailo_detections(roi);
+//     for (auto &detection : detections)
+//     {
+//         auto detection_bbox = detection->get_bbox();
+//         auto xmin = (detection_bbox.xmin() * roi_bbox.width()) + roi_bbox.xmin();
+//         auto ymin = (detection_bbox.ymin() * roi_bbox.height()) + roi_bbox.ymin();
+//         auto xmax = (detection_bbox.xmax() * roi_bbox.width()) + roi_bbox.xmin();
+//         auto ymax = (detection_bbox.ymax() * roi_bbox.height()) + roi_bbox.ymin();
+
+//         xmin = std::clamp(xmin, 0.0f, 1.0f);
+//         ymin = std::clamp(ymin, 0.0f, 1.0f);
+//         xmax = std::clamp(xmax, 0.0f, 1.0f);
+//         ymax = std::clamp(ymax, 0.0f, 1.0f);
+//         HailoBBox new_bbox(xmin, ymin, xmax - xmin, ymax - ymin);
+//         detection->set_bbox(new_bbox);
+//     }
+
+//     // Clear the scaling bbox of main roi because all detections are fixed.
+//     roi->clear_scaling_bbox();
+// }
 void filter_letterbox(HailoROIPtr roi)
 {
-    filter(roi);
-    // Resize Letterbox
-    HailoBBox roi_bbox = hailo_common::create_flattened_bbox(roi->get_bbox(), roi->get_scaling_bbox());
-    auto detections = hailo_common::get_hailo_detections(roi);
-    for (auto &detection : detections)
-    {
-        auto detection_bbox = detection->get_bbox();
-        auto xmin = (detection_bbox.xmin() * roi_bbox.width()) + roi_bbox.xmin();
-        auto ymin = (detection_bbox.ymin() * roi_bbox.height()) + roi_bbox.ymin();
-        auto xmax = (detection_bbox.xmax() * roi_bbox.width()) + roi_bbox.xmin();
-        auto ymax = (detection_bbox.ymax() * roi_bbox.height()) + roi_bbox.ymin();
-
-        HailoBBox new_bbox(xmin, ymin, xmax - xmin, ymax - ymin);
-        detection->set_bbox(new_bbox);
+    try {
+        filter(roi);
+        HailoBBox roi_bbox = hailo_common::create_flattened_bbox(roi->get_bbox(), roi->get_scaling_bbox());
+        auto detections = hailo_common::get_hailo_detections(roi);
+        for (auto &detection : detections)
+        {
+            auto detection_bbox = detection->get_bbox();
+            auto xmin = std::clamp((detection_bbox.xmin() * roi_bbox.width()) + roi_bbox.xmin(), 0.0f, 1.0f);
+            auto ymin = std::clamp((detection_bbox.ymin() * roi_bbox.height()) + roi_bbox.ymin(), 0.0f, 1.0f);
+            auto xmax = std::clamp((detection_bbox.xmax() * roi_bbox.width()) + roi_bbox.xmin(), 0.0f, 1.0f);
+            auto ymax = std::clamp((detection_bbox.ymax() * roi_bbox.height()) + roi_bbox.ymin(), 0.0f, 1.0f);
+            HailoBBox new_bbox(xmin, ymin, xmax - xmin, ymax - ymin);
+            detection->set_bbox(new_bbox);
+        }
+        roi->clear_scaling_bbox();
+    } catch (const std::exception &e) {
+        std::cerr << "[CUSTOM-13KP] Exception in filter_letterbox: " << e.what() << std::endl;
     }
-
-    // Clear the scaling bbox of main roi because all detections are fixed.
-    roi->clear_scaling_bbox();
 }
