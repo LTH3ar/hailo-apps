@@ -17,13 +17,17 @@ except ImportError:
 logger = get_logger(__name__)
 
 # Joint pairs used for drawing pose estimations
+# JOINT_PAIRS = [
+#     [0, 1], [1, 3], [0, 2], [2, 4],
+#     [5, 6], [5, 7], [7, 9], [6, 8], [8, 10],
+#     [5, 11], [6, 12], [11, 12],
+#     [11, 13], [12, 14], [13, 15], [14, 16]
+# ]
 JOINT_PAIRS = [
     [0, 1], [1, 3], [0, 2], [2, 4],
     [5, 6], [5, 7], [7, 9], [6, 8], [8, 10],
-    [5, 11], [6, 12], [11, 12],
-    [11, 13], [12, 14], [13, 15], [14, 16]
+    [5, 11], [6, 12], [11, 12]
 ]
-
 
 class PoseEstPostProcessing:
     def __init__(self, max_detections: int, score_threshold: float, nms_iou_thresh: float,
@@ -84,7 +88,8 @@ class PoseEstPostProcessing:
         raw_detections_keys = list(raw_detections.keys())
         layer_from_shape = {raw_detections[key].shape: key for key in raw_detections_keys}
         detection_output_channels = (self.regression_length + 1) * 4  # (regression length + 1) * num_coordinates
-        keypoints = 51
+        # keypoints = 51
+        keypoints = 39
         endnodes = [
             raw_detections[layer_from_shape[1, 20, 20, detection_output_channels]],
             raw_detections[layer_from_shape[1, 20, 20, class_num]],
@@ -130,13 +135,15 @@ class PoseEstPostProcessing:
         scores = np.concatenate(scores, axis=1)
 
         kpts = [
-            np.reshape(c, (-1, c.shape[1] * c.shape[2], 17, 3)) for c in endnodes[2:9:3]
+            # np.reshape(c, (-1, c.shape[1] * c.shape[2], 17, 3)) for c in endnodes[2:9:3]
+            np.reshape(c, (-1, c.shape[1] * c.shape[2], 13, 3)) for c in endnodes[2:9:3]
         ]
 
         decoded_boxes, decoded_kpts = self.decoder(raw_boxes,
                                                    kpts, strides,
                                                    image_dims, self.regression_length)
-        decoded_kpts = np.reshape(decoded_kpts, (batch_size, -1, 51))
+        # decoded_kpts = np.reshape(decoded_kpts, (batch_size, -1, 51))
+        decoded_kpts = np.reshape(decoded_kpts, (batch_size, -1, 39))
         predictions = np.concatenate([decoded_boxes, scores, decoded_kpts], axis=2)
 
         nms_res = self.non_max_suppression(
@@ -146,8 +153,10 @@ class PoseEstPostProcessing:
 
         output = {
             'bboxes': np.zeros((batch_size, self.max_detections, 4)),
-            'keypoints': np.zeros((batch_size, self.max_detections, 17, 2)),
-            'joint_scores': np.zeros((batch_size, self.max_detections, 17, 1)),
+            # 'keypoints': np.zeros((batch_size, self.max_detections, 17, 2)),
+            # 'joint_scores': np.zeros((batch_size, self.max_detections, 17, 1)),
+            'keypoints': np.zeros((batch_size, self.max_detections, 13, 2)),
+            'joint_scores': np.zeros((batch_size, self.max_detections, 13, 1)),
             'scores': np.zeros((batch_size, self.max_detections, 1))
         }
 
@@ -290,7 +299,8 @@ class PoseEstPostProcessing:
             cv2.putText(image, str(detection_score), (xmin, ymin), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (36, 255, 12), 1)
 
             joint_visible = detection_keypoints_score > joint_threshold
-            detection_keypoints = detection_keypoints.reshape(17, 2)
+            # detection_keypoints = detection_keypoints.reshape(17, 2)
+            detection_keypoints = detection_keypoints.reshape(13, 2)
             detection_keypoints = self.map_keypoints_to_original_coords(
                 detection_keypoints, orig_w, orig_h, model_width, model_height
             )
@@ -471,9 +481,12 @@ class PoseEstPostProcessing:
         y[:, 3] = x[:, 1] + x[:, 3] / 2
         return y
 
+    # def non_max_suppression(
+    #         self, prediction: np.ndarray, conf_thres: float = 0.1, iou_thres: float = 0.45,
+    #         max_det: int = 100, n_kpts: int = 17
     def non_max_suppression(
             self, prediction: np.ndarray, conf_thres: float = 0.1, iou_thres: float = 0.45,
-            max_det: int = 100, n_kpts: int = 17
+            max_det: int = 100, n_kpts: int = 13
     ) -> List[dict]:
         """
         Non-Maximum Suppression (NMS) on inference results to reject overlapping detections.

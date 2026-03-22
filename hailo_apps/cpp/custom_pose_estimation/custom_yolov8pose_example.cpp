@@ -18,7 +18,8 @@
 #include <iostream>
 #include <sstream>
 #include "general/hailo_objects.hpp"
-#include "yolov8pose_postprocess.hpp"
+// #include "yolov8pose_postprocess.hpp"
+#include "custom_yolov8pose_postprocess.hpp"
 
 #include <iostream>
 #include <chrono>
@@ -145,7 +146,7 @@ void postprocess_callback(
 
 int main(int argc, char** argv)
 {
-    const std::string APP_NAME = "pose_estimation";
+    const std::string APP_NAME = "custom_pose_estimation";
     std::chrono::duration<double> inference_time;
     std::chrono::time_point<std::chrono::system_clock> t_start = std::chrono::high_resolution_clock::now();
     double org_height, org_width;

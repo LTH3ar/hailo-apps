@@ -7,7 +7,7 @@ from functools import partial
 import numpy as np
 import threading
 from pathlib import Path
-from pose_estimation_utils import PoseEstPostProcessing
+from custom_pose_estimation_utils import PoseEstPostProcessing
 import collections
 try:
     from hailo_apps.python.core.common.hailo_logger import get_logger, init_logging, level_from_args

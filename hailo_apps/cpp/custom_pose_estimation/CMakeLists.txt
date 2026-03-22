@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(pose_estimation)
+project(custom_pose_estimation)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "11")

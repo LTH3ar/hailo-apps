@@ -9,10 +9,10 @@ from hailo_apps.python.core.common.core import (
     resolve_hef_path,
 )
 from hailo_apps.python.core.common.defines import (
-    POSE_ESTIMATION_APP_TITLE,
-    POSE_ESTIMATION_PIPELINE,
-    POSE_ESTIMATION_POSTPROCESS_FUNCTION,
-    POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
+    CUSTOM_POSE_ESTIMATION_APP_TITLE,
+    CUSTOM_POSE_ESTIMATION_PIPELINE,
+    CUSTOM_POSE_ESTIMATION_POSTPROCESS_FUNCTION,
+    CUSTOM_POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
     RESOURCES_SO_DIR_NAME,
 )
 
@@ -38,13 +38,13 @@ hailo_logger = get_logger(__name__)
 # -----------------------------------------------------------------------------------------------
 # User Gstreamer Application
 # -----------------------------------------------------------------------------------------------
-class GStreamerPoseEstimationApp(GStreamerApp):
+class GStreamerCustomPoseEstimationApp(GStreamerApp):
     def __init__(self, app_callback, user_data, parser=None):
         if parser is None:
             parser = get_pipeline_parser()
         
         # Handle --list-models flag before full initialization
-        handle_list_models_flag(parser, POSE_ESTIMATION_PIPELINE)
+        handle_list_models_flag(parser, CUSTOM_POSE_ESTIMATION_PIPELINE)
         
         hailo_logger.info("Initializing GStreamer Pose Estimation App...")
 
@@ -68,22 +68,22 @@ class GStreamerPoseEstimationApp(GStreamerApp):
         # Resolve HEF path with smart lookup and auto-download
         self.hef_path = resolve_hef_path(
             self.hef_path,
-            app_name=POSE_ESTIMATION_PIPELINE,
+            app_name=CUSTOM_POSE_ESTIMATION_PIPELINE,
             arch=self.arch
         )
         hailo_logger.debug("Using HEF path: %s", self.hef_path)
 
         self.app_callback = app_callback
         self.post_process_so = get_resource_path(
-            POSE_ESTIMATION_PIPELINE, RESOURCES_SO_DIR_NAME, self.arch, POSE_ESTIMATION_POSTPROCESS_SO_FILENAME
+            CUSTOM_POSE_ESTIMATION_PIPELINE, RESOURCES_SO_DIR_NAME, self.arch, CUSTOM_POSE_ESTIMATION_POSTPROCESS_SO_FILENAME
         )
-        self.post_process_function = POSE_ESTIMATION_POSTPROCESS_FUNCTION
+        self.post_process_function = CUSTOM_POSE_ESTIMATION_POSTPROCESS_FUNCTION
         hailo_logger.debug(
             "Post-process SO: %s, Function: %s", self.post_process_so, self.post_process_function
         )
 
-        setproctitle.setproctitle(POSE_ESTIMATION_APP_TITLE)
-        hailo_logger.debug("Process title set: %s", POSE_ESTIMATION_APP_TITLE)
+        setproctitle.setproctitle(CUSTOM_POSE_ESTIMATION_APP_TITLE)
+        hailo_logger.debug("Process title set: %s", CUSTOM_POSE_ESTIMATION_APP_TITLE)
 
         self.create_pipeline()
         hailo_logger.info("Pipeline created successfully.")
@@ -124,7 +124,7 @@ class GStreamerPoseEstimationApp(GStreamerApp):
 def main():
     hailo_logger.info("Starting Pose Estimation App main()...")
     user_data = app_callback_class()
-    app = GStreamerPoseEstimationApp(dummy_callback, user_data)
+    app = GStreamerCustomPoseEstimationApp(dummy_callback, user_data)
     app.run()
 
 

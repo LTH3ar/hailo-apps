@@ -7,31 +7,32 @@
 #include <vector>
 
 // Hailo includes
-#include "general/hailo_xtensor.hpp"
-#include "general/math.hpp"
-#include "general/tensors.hpp"
-#include "labels/coco_eighty.hpp"
-#include "yolov8pose_postprocess.hpp"
+#include "hailo_xtensor.hpp"
+#include "common/math.hpp"
+#include "common/tensors.hpp"
+#include "common/labels/coco_eighty.hpp"
+// #include "yolov8pose_postprocess.hpp"
+#include "custom_yolov8pose_postprocess.hpp"
 
-#include "xtensor/containers/xadapt.hpp"
-#include "xtensor/containers/xarray.hpp"
-#include "xtensor/containers/xcontainer.hpp"
-#include "xtensor/core/xeval.hpp"
-#include "xtensor/containers/xtensor.hpp"
-#include "xtensor/views/xindex_view.hpp"
-#include "xtensor/io/xio.hpp"
-#include "xtensor/misc/xmanipulation.hpp"
-#include "xtensor/views/xmasked_view.hpp"
-#include "xtensor/misc/xset_operation.hpp"
-#include "xtensor/misc/xpad.hpp"
-#include "xtensor/generators/xrandom.hpp"
-#include "xtensor/core/xshape.hpp"
-#include "xtensor/misc/xsort.hpp"
-#include "xtensor/views/xstrided_view.hpp"
-#include "xtensor/views/xview.hpp"
+#include "xtensor/xadapt.hpp"
+#include "xtensor/xarray.hpp"
+#include "xtensor/xcontainer.hpp"
+#include "xtensor/xeval.hpp"
+#include "xtensor/xtensor.hpp"
+#include "xtensor/xindex_view.hpp"
+#include "xtensor/xio.hpp"
+#include "xtensor/xmanipulation.hpp"
+#include "xtensor/xmasked_view.hpp"
+#include "xtensor/xoperation.hpp"
+#include "xtensor/xpad.hpp"
+#include "xtensor/xrandom.hpp"
+#include "xtensor/xshape.hpp"
+#include "xtensor/xsort.hpp"
+#include "xtensor/xstrided_view.hpp"
+#include "xtensor/xview.hpp"
 
-
-
+#include "hailo_tensors.hpp"                   // for HailoTensorPtr
+#include "hailo/hailo_gst_tensor_metadata.hpp" // for hailo_format_type_t, HAILO_FORMAT_TYPE_UINT16
 
 using namespace xt::placeholders;
 
@@ -39,8 +40,10 @@ using namespace xt::placeholders;
 #define IOU_THRESHOLD 0.7
 #define NUM_CLASSES 1
 
+// std::vector<std::pair<int, int>> JOINT_PAIRS = {
+//     {0, 1}, {1, 3}, {0, 2}, {2, 4}, {5, 6}, {5, 7}, {7, 9}, {6, 8}, {8, 10}, {5, 11}, {6, 12}, {11, 12}, {11, 13}, {12, 14}, {13, 15}, {14, 16}};
 std::vector<std::pair<int, int>> JOINT_PAIRS = {
-    {0, 1}, {1, 3}, {0, 2}, {2, 4}, {5, 6}, {5, 7}, {7, 9}, {6, 8}, {8, 10}, {5, 11}, {6, 12}, {11, 12}, {11, 13}, {12, 14}, {13, 15}, {14, 16}};
+    {0, 1}, {1, 3}, {0, 2}, {2, 4}, {5, 6}, {5, 7}, {7, 9}, {6, 8}, {8, 10}, {5, 11}, {6, 12}, {11, 12}};
 
 std::pair<std::vector<KeyPt>, std::vector<PairPairs>> process_single_decoding(const Decodings &dec, const std::vector<int> &network_dims, float joint_threshold = 0.5)
 {
@@ -215,8 +218,8 @@ std::vector<Decodings> decode_boxes_and_keypoints(std::vector<HailoTensorPtr> ra
     for (uint i = 0; i < raw_boxes_outputs.size(); i++)
     {
         // Boxes setup
-        float32_t qp_scale = raw_boxes_outputs[i]->vstream_info().quant_info.qp_scale;
-        float32_t qp_zp = raw_boxes_outputs[i]->vstream_info().quant_info.qp_zp;
+        float32_t qp_scale = raw_boxes_outputs[i]->quant_info().qp_scale;
+        float32_t qp_zp = raw_boxes_outputs[i]->quant_info().qp_zp;
 
         auto output_b = common::get_xtensor(raw_boxes_outputs[i]);
         int num_proposals = output_b.shape(0) * output_b.shape(1);
@@ -226,18 +229,22 @@ std::vector<Decodings> decode_boxes_and_keypoints(std::vector<HailoTensorPtr> ra
         auto shape = {quantized_boxes.shape(1), quantized_boxes.shape(2)};
 
         // Keypoints setup
-        float32_t qp_scale_kpts = raw_keypoints[i]->vstream_info().quant_info.qp_scale;
-        float32_t qp_zp_kpts = raw_keypoints[i]->vstream_info().quant_info.qp_zp;
-        hailo_format_type_t keypoints_format = raw_keypoints[i]->vstream_info().format.type;
-        if (keypoints_format == HAILO_FORMAT_TYPE_UINT8)
-        {
-            throw std::runtime_error("This postprocess does not support uint8 keypoints format, download the updated HEF version.");
+        float32_t qp_scale_kpts = raw_keypoints[i]->quant_info().qp_scale;
+        float32_t qp_zp_kpts    = raw_keypoints[i]->quant_info().qp_zp;
+
+        // Reject anything that isn't uint16—this postprocess only supports uint16 keypoints
+        if (raw_keypoints[i]->format().type != HailoTensorFormatType::HAILO_FORMAT_TYPE_UINT16) {
+            throw std::runtime_error(
+                "This postprocess does not support uint8 keypoints format; "
+                "please download an updated HEF that uses uint16 keypoints."
+            );
         }
 
         auto output_keypoints = common::get_xtensor_uint16(raw_keypoints[i]);
         int num_proposals_keypoints = output_keypoints.shape(0) * output_keypoints.shape(1);
         auto output_keypoints_quantized = xt::view(output_keypoints, xt::all(), xt::all(), xt::all());
-        xt::xarray<uint16_t> quantized_keypoints = xt::reshape_view(output_keypoints_quantized, {num_proposals_keypoints, 17, 3});
+        // xt::xarray<uint16_t> quantized_keypoints = xt::reshape_view(output_keypoints_quantized, {num_proposals_keypoints, 17, 3});
+        xt::xarray<uint16_t> quantized_keypoints = xt::reshape_view(output_keypoints_quantized, {num_proposals_keypoints, 13, 3});
 
         auto keypoints_shape = {quantized_keypoints.shape(1), quantized_keypoints.shape(2)};
 
@@ -326,7 +333,7 @@ Triple get_boxes_scores_keypoints(std::vector<HailoTensorPtr> &tensors, int num_
         outputs_boxes[i / 3] = tensors[i];
 
         // Extract and dequantize the scores outputs
-        auto dequantized_output_s = common::dequantize(common::get_xtensor(tensors[i + 1]), tensors[i + 1]->vstream_info().quant_info.qp_scale, tensors[i + 1]->vstream_info().quant_info.qp_zp);
+        auto dequantized_output_s = common::dequantize(common::get_xtensor(tensors[i + 1]), tensors[i + 1]->quant_info().qp_scale, tensors[i + 1]->quant_info().qp_zp);
         int num_proposals_scores = dequantized_output_s.shape(0) * dequantized_output_s.shape(1);
 
         // From the layer extract the scores
@@ -340,7 +347,12 @@ Triple get_boxes_scores_keypoints(std::vector<HailoTensorPtr> &tensors, int num_
     return Triple{outputs_boxes, scores, outputs_keypoints};
 }
 
-std::vector<Decodings> yolov8pose_postprocess(std::vector<HailoTensorPtr> &tensors,
+// std::vector<Decodings> yolov8pose_postprocess(std::vector<HailoTensorPtr> &tensors,
+//                                               std::vector<int> network_dims,
+//                                               std::vector<int> strides,
+//                                               int regression_length,
+//                                               int num_classes)
+std::vector<Decodings> custom_yolov8pose_postprocess(std::vector<HailoTensorPtr> &tensors,
                                               std::vector<int> network_dims,
                                               std::vector<int> strides,
                                               int regression_length,
@@ -382,7 +394,8 @@ std::pair<std::vector<KeyPt>, std::vector<PairPairs>> yolov8(HailoROIPtr roi)
     std::vector<int> network_dims = {640, 640};
 
     std::vector<HailoTensorPtr> tensors = roi->get_tensors();
-    auto filtered_decodings = yolov8pose_postprocess(tensors, network_dims, strides, regression_length, NUM_CLASSES);
+    // auto filtered_decodings = yolov8pose_postprocess(tensors, network_dims, strides, regression_length, NUM_CLASSES);
+    auto filtered_decodings = custom_yolov8pose_postprocess(tensors, network_dims, strides, regression_length, NUM_CLASSES);
 
     std::vector<HailoDetection> detections;
 

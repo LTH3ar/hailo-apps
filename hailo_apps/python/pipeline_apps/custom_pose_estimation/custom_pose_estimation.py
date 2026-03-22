@@ -13,8 +13,8 @@ import cv2
 import hailo
 from gi.repository import Gst
 
-from hailo_apps.python.pipeline_apps.pose_estimation.pose_estimation_pipeline import (
-    GStreamerPoseEstimationApp,
+from hailo_apps.python.pipeline_apps.custom_pose_estimation.custom_pose_estimation_pipeline import (
+    GStreamerCustomPoseEstimationApp,
 )
 from hailo_apps.python.core.common.buffer_utils import (
     get_caps_from_pad,
@@ -111,18 +111,14 @@ def get_keypoints():
         "left_wrist": 9,
         "right_wrist": 10,
         "left_hip": 11,
-        "right_hip": 12,
-        "left_knee": 13,
-        "right_knee": 14,
-        "left_ankle": 15,
-        "right_ankle": 16,
+        "right_hip": 12
     }
 
 
 def main():
     hailo_logger.info("Starting Pose Estimation App.")
     user_data = user_app_callback_class()
-    app = GStreamerPoseEstimationApp(app_callback, user_data)
+    app = GStreamerCustomPoseEstimationApp(app_callback, user_data)
     app.run()
 
 
