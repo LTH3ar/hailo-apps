@@ -57,10 +57,11 @@ from hailo_apps.python.core.common.defines import (
     RESOURCE_TYPE_MODEL,
     RESOURCE_TYPE_IMAGE,
     RESOURCE_TYPE_VIDEO,
+    RESOURCE_TYPE_ONNX,
     RESOURCE_TYPES,
 )
 
-from hailo_apps.python.core.common.installation_utils import detect_hailo_arch
+from hailo_apps.python.core.common.installation_utils import detect_hailo_arch, auto_detect_hailort_version
 
 
 # =============================================================================
@@ -194,15 +195,25 @@ def get_model_zoo_version_for_arch(hailo_arch: str) -> tuple[str, str]:
     model_zoo_version = os.getenv(MODEL_ZOO_VERSION_KEY)
     
     if model_zoo_version is None:
-        # Derive from HailoRT version for H10
+        # Auto-select default model zoo version based on device architecture
         if hailo_arch == HAILO10H_ARCH:
-            hailort_version = os.getenv(HAILORT_VERSION_KEY, "5.1.1")
-            if hailort_version.startswith("5.2"):
-                model_zoo_version = "v5.2.0"
+            hailort_version = os.getenv(
+                HAILORT_VERSION_KEY,
+                auto_detect_hailort_version()
+            )
+            if not hailort_version:
+                raise RuntimeError(
+                    "Failed to determine HailoRT version for Hailo-10H. "
+                    f"Please set {MODEL_ZOO_VERSION_KEY} manually."
+                )
+            # Keep 5.1 pinned to v5.1.0 for backward compatibility
+            if hailort_version.startswith("5.1"):
+                model_zoo_version = "v5.1.0"
             else:
-                model_zoo_version = "v5.1.0"  # Default for 5.1.x
+                # For newer versions, use the exact HailoRT version
+                model_zoo_version = f"v{hailort_version}"
         else:
-            # H8/H8L always uses v2.17.0
+            # H8/H8L uses the fixed Model Zoo release
             model_zoo_version = "v2.17.0"
     
     # Validate the version
@@ -519,9 +530,8 @@ class ResourceDownloader:
                 .get("s3_endpoints", {})
                 .get("gen_ai_mz", "https://dev-public.hailo.ai")
             )
-            gen_ai_version = f"v{os.getenv(HAILORT_VERSION_KEY, '5.1.1')}"
-            
-            url = f"{gen_ai_base}/{gen_ai_version}/blob/{_ensure_hef_filename(name)}"
+
+            url = f"{gen_ai_base}/{self.model_zoo_version}/blob/{_ensure_hef_filename(name)}"
             test_url(url=url)  # Print URL validation info
             return url
         else:
@@ -563,6 +573,19 @@ class ResourceDownloader:
             dest_path=dest,
             resource_type="model",
             name=name
+        )
+        self._tasks.add(task)
+
+    def _add_onnx_task(self, onnx_name: str):
+        """Add an ONNX sidecar download task by filename."""
+        s3_arch = map_arch_to_s3_path(self.hailo_arch)
+        url = f"{S3_RESOURCES_BASE_URL}/hefs/{s3_arch}/{onnx_name}"
+        dest = self.resource_root / RESOURCES_MODELS_DIR_NAME / self.hailo_arch / onnx_name
+        task = DownloadTask(
+            url=url,
+            dest_path=dest,
+            resource_type="onnx",
+            name=onnx_name,
         )
         self._tasks.add(task)
     
@@ -824,13 +847,15 @@ class ResourceDownloader:
         if "npy" in self.config:
             for npy_entry in self.config["npy"]:
                 self._add_npy_task(npy_entry)
-    
-    def collect_all_npy_files(self):
-        """Collect all NPY download tasks from top-level npy section."""
-        if "npy" in self.config:
-            for npy_entry in self.config["npy"]:
+
+    def collect_npy_by_tag(self, tag: str):
+        """Collect NPY download tasks filtered by tag."""
+        if "npy" not in self.config:
+            return
+        for npy_entry in self.config["npy"]:
+            if isinstance(npy_entry, dict) and tag in npy_entry.get("tag", []):
                 self._add_npy_task(npy_entry)
-    
+
     def collect_models_for_app(
         self,
         app_name: str,
@@ -936,6 +961,9 @@ class ResourceDownloader:
             f"and architecture '{self.hailo_arch}'"
         )
 
+    def collect_specific_onnx_for_app(self, app_name: str, onnx_name: str):
+        """Collect a specific ONNX sidecar artifact for a specific app."""
+        self._add_onnx_task(onnx_name)
 
     def collect_specific_model(self, model_name: str):
         """Collect a specific model by name."""
@@ -1323,7 +1351,7 @@ def download_resources(
         group: Specific group/app name to download resources for
         all_models: If True, download all models (default + extra) for all apps
         resource_name: Specific resource name to download
-        resource_type: Type of the resource specified by `resource_name`, supported values: "model", "image", "video".
+        resource_type: Type of the resource specified by `resource_name`, supported values: "model", "image", "video", "onnx".
         dry_run: If True, only show what would be downloaded
         force: If True, force re-download even if files exist
         parallel: If True, download files in parallel
@@ -1376,6 +1404,10 @@ def download_resources(
         elif resource_type == RESOURCE_TYPE_MODEL:
             hailo_logger.info(f"Collecting specific model: {resource_name} (group={group})")
             downloader.collect_specific_model_for_app(group, resource_name)
+
+        elif resource_type == RESOURCE_TYPE_ONNX:
+            hailo_logger.info(f"Collecting specific onnx: {resource_name} (group={group})")
+            downloader.collect_specific_onnx_for_app(group, resource_name)
 
         downloader.execute(parallel=parallel)
         return
@@ -1605,7 +1637,7 @@ Examples:
         type=str,
         default=None,
         choices=sorted(RESOURCE_TYPES),
-        help="Type of the resource specified by --resource-name (model/image/video)"
+        help="Type of the resource specified by --resource-name (model/image/video/onnx)"
     )
     parser.add_argument(
         "--list-models",

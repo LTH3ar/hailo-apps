@@ -35,7 +35,6 @@ from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
     DISPLAY_PIPELINE,
     INFERENCE_PIPELINE,
     INFERENCE_PIPELINE_WRAPPER,
-    SOURCE_PIPELINE,
     USER_CALLBACK_PIPELINE,
     CROPPER_PIPELINE,
     TRACKER_PIPELINE,
@@ -84,7 +83,7 @@ class GStreamerPaddleOCRApp(GStreamerApp):
                          self.recognition_batch_size, self.recognition_batch_size)
 
         # Set frame rate to 10FPS for better performance and reduced processing load
-        if self.frame_rate > 10:
+        if self.frame_rate is not None and self.frame_rate > 10:
             self.frame_rate = 10
             hailo_logger.info("OCR pipeline: Frame rate set to %d FPS", self.frame_rate)
 
@@ -162,14 +161,7 @@ class GStreamerPaddleOCRApp(GStreamerApp):
         """Returns the OCR pipeline with detection and recognition."""
         # Full pipeline with detection and recognition
         # 1. Source pipeline
-        source_pipeline = SOURCE_PIPELINE(
-            video_source=self.video_source,
-            video_width=self.video_width,
-            video_height=self.video_height,
-            frame_rate=self.frame_rate,
-            sync=self.sync,
-            mirror_image=False,
-        )
+        source_pipeline = self.get_source_pipeline()
 
         # 2. OCR Detection pipeline - detects text regions (bounding boxes)
         ocr_det_pipeline = INFERENCE_PIPELINE(

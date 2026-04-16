@@ -92,7 +92,6 @@ def get_base_parser() -> argparse.ArgumentParser:
         "--frame-rate",
         "-f",
         type=int,
-        default=30,
         help=(
             "Target frame rate for video processing in frames per second. "
             "Controls the playback speed and processing rate for video sources. "
@@ -164,6 +163,12 @@ def get_pipeline_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--print-pipeline",
+        action="store_true",
+        help="Print the GStreamer pipeline string to stdout before launching.",
+    )
+
+    parser.add_argument(
         "--enable-watchdog",
         action="store_true",
         help=(
@@ -224,6 +229,21 @@ def get_pipeline_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Mirror / flip options
+    parser.add_argument(
+        "--horizontal-mirror",
+        action="store_true",
+        default=False,
+        help="Enable horizontal mirror (flip) of the video source.",
+    )
+
+    parser.add_argument(
+        "--vertical-mirror",
+        action="store_true",
+        default=False,
+        help="Enable vertical mirror (flip) of the video source. Useful when camera is mounted upside down.",
+    )
+
     return parser
 
 
@@ -265,6 +285,32 @@ def get_standalone_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--no-display",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable frame display. "
+            "When enabled, the application runs without opening a visualization window. "
+            "Useful for performance testing or headless execution."
+        ),
+    )
+
+    parser.add_argument(
+        "--video-unpaced",
+        action="store_true",
+        default=False,
+        help="Run video files as fast as processing allows (no playback pacing). ",
+    )
+
+    parser.add_argument(
+        "-t", "--time-to-run",
+        type=int,
+        default=None,
+        metavar="UINT:POSITIVE",
+        help="Time to run (seconds)."
+    )
+
+    parser.add_argument(
         "-or",
         "--output-resolution",
         nargs="+",
@@ -301,6 +347,16 @@ def get_standalone_parser() -> argparse.ArgumentParser:
             "The output location is determined by the --output-dir flag. Without this flag, output is only displayed (if applicable)."
         ),
     )
+
+    # parser.add_argument(
+    #     "--no-display",
+    #     action="store_true",
+    #     help=(
+    #         "Disable real-time GUI display (headless mode). "
+    #         "Useful when no display server (e.g. X11/Wayland/Qt) is available. "
+    #         "Automatically enables --save-output so results are written to disk."
+    #     ),
+    # )
 
     return parser
 

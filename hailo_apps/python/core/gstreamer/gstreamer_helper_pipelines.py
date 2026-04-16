@@ -51,6 +51,10 @@ def get_source_type(input_source):
         return "ximage"
     elif input_source.startswith('rtsp://'):
         return 'rtsp'
+    elif input_source.startswith('udp://'):
+        return 'udp'
+    elif input_source.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+        return "image"
     else:
         return "file"
 
@@ -95,7 +99,9 @@ def SOURCE_PIPELINE(
     frame_rate=30,
     sync=True,
     video_format="RGB",
-    mirror_image=True,
+    horizontal_mirror=False,
+    vertical_mirror=False,
+    num_buffers=30,
 ):
     """Creates a GStreamer pipeline string for the video source with a separate fps caps
     for frame rate control.
@@ -106,15 +112,25 @@ def SOURCE_PIPELINE(
         video_height (int, optional): The height of the video. Defaults to 640.
         video_format (str, optional): The video format. Defaults to 'RGB'.
         name (str, optional): The prefix name for the pipeline elements. Defaults to 'source'.
-        mirror_image (bool, optional): Whether to horizontally mirror the image (for camera sources). Defaults to True.
+        horizontal_mirror (bool, optional): Whether to horizontally mirror the image (for camera sources). Defaults to True.
+        vertical_mirror (bool, optional): Whether to vertically flip the image. Defaults to False.
 
     Returns:
         str: A string representing the GStreamer pipeline for the video source.
     """
     source_type = get_source_type(video_source)
 
-    # Build videoflip element string conditionally
-    videoflip_str = f'videoflip name=videoflip_{name} video-direction=horiz ! ' if mirror_image else ''
+    # Build a single videoflip element for all flip/mirror combinations.
+    # Placed after videoconvert in the pipeline so the input is always in a
+    # format videoflip supports (some decoders output e.g. I422_10LE).
+    if horizontal_mirror and vertical_mirror:
+        flip_str = f"videoflip name=videoflip_{name} method=rotate-180 ! "
+    elif horizontal_mirror:
+        flip_str = f"videoflip name=videoflip_{name} video-direction=horiz ! "
+    elif vertical_mirror:
+        flip_str = f"videoflip name=videoflip_{name} method=vertical-flip ! "
+    else:
+        flip_str = ""
 
     if source_type == "usb":
         if no_webcam_compression or is_v4l2loopback_device(video_source):
@@ -123,7 +139,6 @@ def SOURCE_PIPELINE(
             source_element = (
                 f'v4l2src device={video_source} name={name} ! '
                 f'video/x-raw, width=640, height=480 ! '
-                f'{videoflip_str}'
             )
         else:
             # Use compressed format for webcam
@@ -132,13 +147,10 @@ def SOURCE_PIPELINE(
                 f'v4l2src device={video_source} name={name} ! image/jpeg, framerate=30/1, width={width}, height={height} ! '
                 f'{QUEUE(name=f"{name}_queue_decode")} ! '
                 f'decodebin name={name}_decodebin ! '
-                f'{videoflip_str}'
             )
     elif source_type == "rpi":
-        rpi_videoflip_str = "videoflip name=videoflip video-direction=horiz ! " if mirror_image else ""
         source_element = (
             f"appsrc name=app_source is-live=true leaky-type=downstream max-buffers=3 ! "
-            f"{rpi_videoflip_str}"
             f"video/x-raw, format={video_format}, width={video_width}, height={video_height} ! "
         )
     elif source_type == "libcamera":
@@ -156,6 +168,23 @@ def SOURCE_PIPELINE(
             f'{QUEUE(name=f"{name}_queue_decode")} ! '
             f'decodebin name={name}_decodebin ! '
         )
+    elif source_type == 'udp':  # UDP stream handling (e.g., Gazebo camera)
+        # Extract port from udp://host:port or udp://:port
+        port = video_source.split(':')[-1]
+        source_element = (
+            f'udpsrc port={port} name={name} ! '
+            f'application/x-rtp, encoding-name=H264, payload=96 ! '
+            f'{QUEUE(name=f"{name}_queue_decode")} ! '
+            f'rtph264depay ! '
+            f'h264parse ! '
+            f'avdec_h264 name={name}_decodebin ! '
+        )
+    elif source_type == "image":
+        source_element = (
+            f'filesrc location="{video_source}" name={name} ! '
+            f'decodebin name={name}_decodebin ! '
+            f'imagefreeze num-buffers={num_buffers} ! '
+        )
     else:
         source_element = (
             f'filesrc location="{video_source}" name={name} ! '
@@ -164,9 +193,11 @@ def SOURCE_PIPELINE(
         )
 
     # Set up the fps caps.
-    # If sync is True, constrain the rate with the given frame_rate.
+    # If sync is True and frame_rate is specified, constrain the rate.
     # Otherwise, pass through (no framerate limitation).
-    if sync:
+    # Note: sync may be a string "true"/"false" from GStreamerApp, so normalize it.
+    sync_enabled = sync if isinstance(sync, bool) else str(sync).lower() == "true"
+    if sync_enabled and frame_rate is not None:
         fps_caps = f"video/x-raw, framerate={frame_rate}/1"
     else:
         fps_caps = "video/x-raw"
@@ -179,6 +210,7 @@ def SOURCE_PIPELINE(
         f"videoconvert n-threads=3 name={name}_convert qos=false ! "
         f"video/x-raw, pixel-aspect-ratio=1/1, format={video_format}, "
         f"width={video_width}, height={video_height} ! "
+        f"{flip_str}"
         f'videorate name={name}_videorate ! capsfilter name={name}_fps_caps caps="{fps_caps}" '
     )
 

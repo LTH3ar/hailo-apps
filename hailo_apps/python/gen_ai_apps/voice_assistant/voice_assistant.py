@@ -2,9 +2,18 @@ import argparse
 import threading
 from io import StringIO
 from contextlib import redirect_stderr
-
+from pathlib import Path
+import sys
 from hailo_platform import VDevice
 from hailo_platform.genai import LLM
+
+repo_root = None
+for p in Path(__file__).resolve().parents:
+    if (p / "hailo_apps" / "config" / "config_manager.py").exists():
+        repo_root = p
+        break
+if repo_root is not None:
+    sys.path.insert(0, str(repo_root))
 
 from hailo_apps.python.core.common.defines import LLM_PROMPT_PREFIX, SHARED_VDEVICE_GROUP_ID, HAILO10H_ARCH, VOICE_ASSISTANT_APP, VOICE_ASSISTANT_MODEL_NAME
 from hailo_apps.python.core.common.core import resolve_hef_path
@@ -174,9 +183,6 @@ def main():
     add_logging_cli_args(parser)
     parser.add_argument('--no-tts', action='store_true',
                         help='Disable text-to-speech output for lower resource usage.')
-
-    # Add VAD arguments
-    add_vad_args(parser)
 
     # Add VAD arguments
     add_vad_args(parser)

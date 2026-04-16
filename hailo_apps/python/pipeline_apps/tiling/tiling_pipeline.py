@@ -7,7 +7,7 @@ from typing import Optional, Any
 # Local application-specific imports
 from hailo_apps.python.core.common.core import get_pipeline_parser, handle_list_models_flag
 from hailo_apps.python.core.common.defines import TILING_APP_TITLE, TILING_PIPELINE
-from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import SOURCE_PIPELINE, INFERENCE_PIPELINE, USER_CALLBACK_PIPELINE, DISPLAY_PIPELINE, TILE_CROPPER_PIPELINE
+from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import INFERENCE_PIPELINE, USER_CALLBACK_PIPELINE, DISPLAY_PIPELINE, TILE_CROPPER_PIPELINE
 from hailo_apps.python.core.gstreamer.gstreamer_app import GStreamerApp, app_callback_class, dummy_callback
 from hailo_apps.python.core.common.hailo_logger import get_logger
 from hailo_apps.python.pipeline_apps.tiling.configuration import TilingConfiguration
@@ -205,13 +205,7 @@ class GStreamerTilingApp(GStreamerApp):
         Returns:
             str: Complete GStreamer pipeline string
         """
-        source_pipeline = SOURCE_PIPELINE(
-            video_source=self.video_source,
-            video_width=self.video_width,
-            video_height=self.video_height,
-            frame_rate=self.frame_rate,
-            sync=self.sync,
-        )
+        source_pipeline = self.get_source_pipeline()
 
         detection_pipeline = INFERENCE_PIPELINE(
             hef_path=self.hef_path,

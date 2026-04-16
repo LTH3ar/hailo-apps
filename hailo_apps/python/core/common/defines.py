@@ -102,9 +102,9 @@ DEFAULT_DOTENV_PATH = "/usr/local/hailo/resources/.env"  # your env file lives h
 DEFAULT_LOCAL_RESOURCES_PATH = _get_local_resources_path()  # bundled GIFs, JSON, etc.
 
 # Supported config options (used for validation in config_utils.py)
-VALID_HAILORT_VERSION = [AUTO_DETECT, "4.23.0", "5.1.1", "5.2.0"]
-VALID_TAPPAS_VERSION = [AUTO_DETECT, "5.1.0", "5.2.0"]
-VALID_H10_MODEL_ZOO_VERSION = ["v5.1.0", "v5.2.0"]  # First element is default
+VALID_HAILORT_VERSION = [AUTO_DETECT, "4.23.0", "5.1.1", "5.2.0", "5.3.0"]
+VALID_TAPPAS_VERSION = [AUTO_DETECT, "5.1.0", "5.2.0", "5.3.0"]
+VALID_H10_MODEL_ZOO_VERSION = ["v5.1.0", "v5.2.0", "v5.3.0"]  # First element is default
 VALID_H8_MODEL_ZOO_VERSION = ["v2.17.0"]
 VALID_MODEL_ZOO_VERSION = VALID_H10_MODEL_ZOO_VERSION + VALID_H8_MODEL_ZOO_VERSION
 VALID_HOST_ARCH = [AUTO_DETECT, "x86", "rpi", "arm"]
@@ -290,11 +290,13 @@ CAMERA_RESOLUTION_MAP: Dict[str, Tuple[int, int]] = {
 RESOURCE_TYPE_MODEL = "model"
 RESOURCE_TYPE_IMAGE = "image"
 RESOURCE_TYPE_VIDEO = "video"
+RESOURCE_TYPE_ONNX = "onnx"
 
 RESOURCE_TYPES = {
     RESOURCE_TYPE_MODEL,
     RESOURCE_TYPE_IMAGE,
     RESOURCE_TYPE_VIDEO,
+    RESOURCE_TYPE_ONNX,
 }
 
 CAMERA_KEYWORDS = ["usb", "rpi"]
@@ -310,6 +312,10 @@ VLM_CHAT_APP = "vlm_chat"
 LLM_CHAT_APP = "llm_chat"
 WHISPER_CHAT_APP = "whisper_chat"
 AGENT_APP = "agent"
+V2A_DEMO_APP = "v2a_demo"
+
+# Standalone app defaults
+WHISPER_H8_APP = "whisper_h8"
 
 # Gen AI model defaults
 VLM_MODEL_NAME_H10 = "Qwen2-VL-2B-Instruct"

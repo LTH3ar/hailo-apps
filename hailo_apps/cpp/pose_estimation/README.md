@@ -11,7 +11,7 @@ Requirements
 
 - HailoRT  
   - For Hailo-8: `HailoRT==4.23.0`  
-  - For Hailo-10: `HailoRT==5.1.1`
+  - For Hailo-10: `HailoRT==5.3.0`
 
 
 Supported Models
@@ -31,10 +31,18 @@ Usage
     ``` 
 
 2. Compile the project on the development machine  
-    ```shell script
-    ./build.sh
-    ```
-    This creates the directory hierarchy build/x86_64 and compile an executable file called pose_estimation
+
+    - **Linux**
+        ```shell script
+        ./build.sh
+        ```
+    - **Windows**
+        ```shell script
+        cmake -S. -Bbuild -DCMAKE_FIND_PACKAGE_RESOLVE_SYMLINKS=True
+        cmake --build build --config Release
+        ```
+
+    This creates the directory hierarchy build/Release and compile an executable file called pose_estimation
 
 3. Run the example:
 

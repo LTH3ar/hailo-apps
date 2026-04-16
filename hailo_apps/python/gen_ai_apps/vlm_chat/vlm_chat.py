@@ -6,9 +6,20 @@ import sys
 import concurrent.futures
 import select
 import time
+import platform
 from typing import Optional, Callable, Any
+from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = 'xcb'
+
+repo_root = None
+for p in Path(__file__).resolve().parents:
+    if (p / "hailo_apps" / "config" / "config_manager.py").exists():
+        repo_root = p
+        break
+if repo_root is not None:
+    sys.path.insert(0, str(repo_root))
+
 from hailo_apps.python.gen_ai_apps.vlm_chat.backend import Backend
 from hailo_apps.python.core.common.core import get_standalone_parser, get_resource_path, get_logger, handle_list_models_flag, resolve_hef_path
 from hailo_apps.python.core.common.camera_utils import get_usb_video_devices
@@ -78,14 +89,42 @@ class VLMChatApp:
 
     def _get_user_input(self) -> Optional[str]:
         """
-        Check for user input from stdin without blocking.
+        Read user input from stdin without blocking.
+
+        Platform behavior:
+            - Linux / POSIX systems: use `select` to check if stdin is ready.
+            - Windows: use `msvcrt.kbhit()` to detect keyboard input.
 
         Returns:
-            Optional[str]: User input string if available, else None.
+            Optional[str]: The user input string if available, otherwise None.
         """
-        if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-            return sys.stdin.readline().strip()
-        return None
+        try:
+            system = platform.system()
+
+            # Windows handling
+            if system == "Windows":
+                import msvcrt
+
+                # kbhit() checks if a key was pressed without blocking
+                if msvcrt.kbhit():
+                    # Read the full line once the user presses Enter
+                    return sys.stdin.readline().strip()
+
+                return None
+
+            # Linux / POSIX systems (Linux, Raspberry Pi, etc.)
+            # select() checks whether stdin has data available to read
+            if select.select([sys.stdin], [], [], 0)[0]:
+                return sys.stdin.readline().strip()
+
+            # No input available
+            return None
+
+        except Exception as e:
+            # Do not interrupt the application if input polling fails
+            logger.debug(f"Non-blocking input failed: {e}")
+            return None
+
 
     def _init_camera(self) -> tuple[Callable[[], Any], Callable[[], None], str]:
         """
@@ -294,7 +333,6 @@ if __name__ == "__main__":
     if hef_path is None:
         logger.error("Failed to resolve HEF path for VLM model. Exiting.")
         sys.exit(1)
-
     video_source = options_menu.input
     if video_source == USB_CAMERA:
         logger.debug("USB_CAMERA detected; scanning USB devices...")
@@ -310,9 +348,9 @@ if __name__ == "__main__":
             video_source = video_source[0]
 
     # Determine source type (usb, rpi, file, etc.)
-    source_type = get_source_type(video_source) if video_source else None
+    source_type = get_source_type(video_source) if video_source is not None else None
 
-    if not video_source:
+    if video_source is None:
         print('Please provide an input source using the "--input" argument: "usb" for USB camera or "rpi" for Raspberry Pi camera.')
         sys.exit(1)
 
