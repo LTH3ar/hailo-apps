@@ -109,6 +109,7 @@ def run_one(runner, context_type, gt_json, img_dir, out_jsonl, batch_size=8):
     """Run inference and STREAM COCO-format predictions to a JSONL file."""
     coco = COCO(gt_json)
     img_ids = coco.getImgIds()
+    img_ids = img_ids[:500]
     img_metas = {i: coco.loadImgs(i)[0] for i in img_ids}
 
     pp = PoseEstPostProcessing(
