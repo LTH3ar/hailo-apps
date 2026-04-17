@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""
+Evaluate FP32 vs INT8 mAP for a Hailo-optimized HAR file on COCO val2017
+(13-keypoint upper-body subset).
+"""
+import sys, types
+sys.modules['hailo_platform'] = types.ModuleType('hailo_platform')
+sys.modules['hailo_platform'].HEF = None
+import argparse, json, os, sys
+from pathlib import Path
+import numpy as np
+import cv2
+from tqdm import tqdm
+
+from hailo_sdk_client import ClientRunner, InferenceContext
+from custom_pose_estimation_utils import PoseEstPostProcessing
+
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
+# COCO 17-keypoint indices that we kept (Chapter 4: drop indices 13-16)
+KEPT_KEYPOINT_IDS = list(range(13))   # 0..12 = nose, eyes, ears, shoulders, elbows, wrists, hips
+
+
+def letterbox(img, target=640):
+    """Resize keeping aspect ratio + pad. Returns img, scale, (pad_x, pad_y)."""
+    h, w = img.shape[:2]
+    scale = min(target / w, target / h)
+    nw, nh = int(round(w * scale)), int(round(h * scale))
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    pad_x = (target - nw) // 2
+    pad_y = (target - nh) // 2
+    canvas = np.full((target, target, 3), 114, dtype=np.uint8)
+    canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+    return canvas, scale, (pad_x, pad_y)
+
+
+def run_one(runner, context_type, gt_json, img_dir, batch_size=8):
+    """Run inference and return COCO-format predictions list."""
+    coco = COCO(gt_json)
+    img_ids = coco.getImgIds()
+    img_metas = {i: coco.loadImgs(i)[0] for i in img_ids}
+
+    pp = PoseEstPostProcessing(
+        max_detections=100,
+        score_threshold=0.01,
+        nms_iou_thresh=0.7,
+        regression_length=15,
+        strides=[8, 16, 32],
+    )
+
+    predictions = []
+
+    with runner.infer_context(context_type) as ctx:
+        # Process in batches of batch_size
+        for batch_start in tqdm(range(0, len(img_ids), batch_size),
+                                desc=f"Inference ({context_type.name})"):
+            batch_ids = img_ids[batch_start:batch_start + batch_size]
+            batch_imgs, batch_meta = [], []
+
+            for iid in batch_ids:
+                meta = img_metas[iid]
+                path = os.path.join(img_dir, meta['file_name'])
+                img = cv2.imread(path)
+                if img is None:
+                    continue
+                rgb = img[:, :, ::-1]
+                lb, scale, (pad_x, pad_y) = letterbox(rgb, 640)
+                batch_imgs.append(lb)
+                batch_meta.append((iid, meta['width'], meta['height'], scale, pad_x, pad_y))
+
+            if not batch_imgs:
+                continue
+
+            batch_arr = np.stack(batch_imgs).astype(np.float32)
+            raw = runner.infer(ctx, batch_arr)
+
+            # Post-process per-frame (post-process expects dict of arrays)
+            for i, (iid, ow, oh, scale, pad_x, pad_y) in enumerate(batch_meta):
+                # Slice this sample's outputs out of the batched dict
+                #raw_single = {k: v[i:i+1] for k, v in raw.items()}
+                #results = pp.post_process(raw_single, height=640, width=640, class_num=1)
+                raw_single = {f"out_{j}": tensor[i:i+1] for j, tensor in enumerate(raw)}
+
+                results = pp.post_process(raw_single, height=640, width=640, class_num=1)
+
+                bboxes      = results['bboxes'][0]        # (max_det, 4) xywh in 640x640 space
+                keypoints   = results['keypoints'][0]     # (max_det, 13, 2)
+                joint_scores= results['joint_scores'][0]  # (max_det, 13, 1)
+                scores      = results['scores'][0, :, 0]  # (max_det,)
+
+                # Filter padded zero rows
+                valid = scores > 0.001
+                if not valid.any():
+                    continue
+
+                bboxes      = bboxes[valid]
+                keypoints   = keypoints[valid]
+                joint_scores= joint_scores[valid]
+                scores      = scores[valid]
+
+                # Map from 640x640 letterbox space back to original image coords
+                for det_idx in range(len(scores)):
+                    bx, by, bw, bh = bboxes[det_idx]
+                    # bbox is xywh
+                    x = (bx - pad_x) / scale
+                    y = (by - pad_y) / scale
+                    w = bw / scale
+                    h = bh / scale
+
+                    kpts_orig = []
+                    for k in range(13):
+                        kx, ky = keypoints[det_idx, k]
+                        kx = (kx - pad_x) / scale
+                        ky = (ky - pad_y) / scale
+                        v = float(joint_scores[det_idx, k, 0])
+                        # COCO format: x, y, v (visibility)
+                        kpts_orig.extend([float(kx), float(ky), v])
+
+                    predictions.append({
+                        "image_id": int(iid),
+                        "category_id": 1,
+                        "keypoints": kpts_orig,
+                        "score": float(scores[det_idx]),
+                        "bbox": [float(x), float(y), float(w), float(h)],
+                    })
+
+    return predictions
+
+
+def evaluate(gt_json, predictions, label):
+    """Run COCO keypoint mAP. Returns dict of metrics."""
+    coco_gt = COCO(gt_json)
+
+    if not predictions:
+        print(f"[{label}] no predictions, skipping")
+        return None
+
+    # Save and reload (pycocotools requires loading from file or list)
+    coco_dt = coco_gt.loadRes(predictions)
+
+    print(f"\n=== {label}: BBOX ===")
+    bbox_eval = COCOeval(coco_gt, coco_dt, "bbox")
+    bbox_eval.evaluate(); bbox_eval.accumulate(); bbox_eval.summarize()
+
+    print(f"\n=== {label}: KEYPOINTS ===")
+    kpt_eval = COCOeval(coco_gt, coco_dt, "keypoints")
+    # Critical: tell pycocotools we have 13 keypoints, not 17
+    # COCO default sigmas (head + body), use first 13:
+    coco_default_sigmas = np.array([.26,.25,.25,.35,.35,.79,.79,.72,.72,.62,.62,1.07,1.07,
+                                    .87,.87,.89,.89]) / 10.0
+    kpt_eval.params.kpt_oks_sigmas = coco_default_sigmas[:13]
+    kpt_eval.evaluate(); kpt_eval.accumulate(); kpt_eval.summarize()
+
+    return {
+        "bbox_mAP_50_95": bbox_eval.stats[0],
+        "bbox_mAP_50":    bbox_eval.stats[1],
+        "kpt_mAP_50_95":  kpt_eval.stats[0],
+        "kpt_mAP_50":     kpt_eval.stats[1],
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--har", required=True, help="Path to *_optimized.har")
+    ap.add_argument("--gt",  required=True, help="Path to 13-keypoint val2017 GT JSON")
+    ap.add_argument("--imgs", required=True, help="Path to val2017 image directory")
+    ap.add_argument("--out", required=True, help="Output JSON file for results")
+    ap.add_argument("--batch", type=int, default=8)
+    args = ap.parse_args()
+
+    runner = ClientRunner(har=args.har)
+
+    print("\n>>> FP32 (SDK_NATIVE)")
+    fp32_preds = run_one(runner, InferenceContext.SDK_NATIVE,
+                         args.gt, args.imgs, batch_size=args.batch)
+    fp32_metrics = evaluate(args.gt, fp32_preds, "FP32")
+
+    print("\n>>> INT8 (SDK_QUANTIZED)")
+    int8_preds = run_one(runner, InferenceContext.SDK_QUANTIZED,
+                         args.gt, args.imgs, batch_size=args.batch)
+    int8_metrics = evaluate(args.gt, int8_preds, "INT8")
+
+    summary = {
+        "har": args.har,
+        "n_images": len(COCO(args.gt).getImgIds()),
+        "fp32": fp32_metrics,
+        "int8": int8_metrics,
+    }
+    if fp32_metrics and int8_metrics:
+        summary["delta"] = {k: int8_metrics[k] - fp32_metrics[k] for k in fp32_metrics}
+
+    with open(args.out, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"\nSaved {args.out}")
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()
