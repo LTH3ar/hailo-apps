@@ -29,6 +29,8 @@ from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
     SOURCE_PIPELINE,
     TRACKER_PIPELINE,
     USER_CALLBACK_PIPELINE,
+    OVERLAY_PIPELINE,     # NEW
+    FILE_SINK_PIPELINE,   # NEW
 )
 
 hailo_logger = get_logger(__name__)
@@ -106,9 +108,25 @@ class GStreamerCustomPoseEstimationApp(GStreamerApp):
         infer_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(infer_pipeline)
         tracker_pipeline = TRACKER_PIPELINE(class_id=0)
         user_callback_pipeline = USER_CALLBACK_PIPELINE()
+        
+        # Standard showing the result
         display_pipeline = DISPLAY_PIPELINE(
             video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps
         )
+
+        # # Save the video, must comment out the display_pipeline
+        # # Draws the skeletons onto the high-res frames
+        # overlay_pipeline = OVERLAY_PIPELINE()
+
+        # # Straight-to-file pipeline: No tee, no display, high-quality MP4 encoding
+        # pipeline_string = (
+        #     f"{source_pipeline} ! "
+        #     f"{infer_pipeline_wrapper} ! "
+        #     f"{tracker_pipeline} ! "
+        #     f"{user_callback_pipeline} ! "
+        #     f"{overlay_pipeline} ! "
+        #     f"videoconvert ! x264enc bitrate=8000 ! mp4mux ! filesink location=high_res_pose.mp4"
+        # )
 
         pipeline_string = (
             f"{source_pipeline} ! "

@@ -492,7 +492,13 @@ class GStreamerApp:
         if self.source_type == "file":
             hailo_logger.info("File source detected; rebuilding pipeline")
             # Use GLib.idle_add to defer pipeline rebuild and avoid blocking
-            GLib.idle_add(self._rebuild_pipeline)
+            
+            # replay the video
+            # GLib.idle_add(self._rebuild_pipeline)
+
+            # just shutdown when done
+            self.shutdown()
+
         else:
             hailo_logger.debug("Non-file source detected; shutting down")
             self.shutdown()
